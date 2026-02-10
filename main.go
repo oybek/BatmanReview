@@ -19,20 +19,20 @@ import (
 )
 
 type Config struct {
-	DailyCallURL    string
-	GitlabBaseURL   string
-	GitlabToken     string
-	GitlabProjectID string
-	SlackWebhookURL string
+	DailyCallURL     string
+	GitlabBaseURL    string
+	GitlabToken      string
+	GitlabProjectIDs []string
+	SlackWebhookURL  string
 }
 
 func loadConfig() *Config {
 	return &Config{
-		DailyCallURL:    os.Getenv("DAILY_CALL_URL"),
-		GitlabBaseURL:   os.Getenv("GITLAB_BASE_URL"),
-		GitlabToken:     os.Getenv("GITLAB_TOKEN"),
-		GitlabProjectID: os.Getenv("GITLAB_PROJECT_ID"),
-		SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
+		DailyCallURL:     os.Getenv("DAILY_CALL_URL"),
+		GitlabBaseURL:    os.Getenv("GITLAB_BASE_URL"),
+		GitlabToken:      os.Getenv("GITLAB_TOKEN"),
+		GitlabProjectIDs: strings.Split(os.Getenv("GITLAB_PROJECT_IDS"), ";"),
+		SlackWebhookURL:  os.Getenv("SLACK_WEBHOOK_URL"),
 	}
 }
 
@@ -53,6 +53,7 @@ func main() {
 	_, err = s.NewJob(
 		gocron.DailyJob(1, gocron.NewAtTimes(gocron.NewAtTime(12, 15, 0))),
 		gocron.NewTask(func() {
+
 			wd := time.Now().In(loc).Weekday()
 			if wd == time.Saturday || wd == time.Sunday {
 				log.Printf("skipping MR reports on weekend: %s", wd)
@@ -61,7 +62,7 @@ func main() {
 
 			log.Printf("running listOpenMRs at %s\n", time.Now().Format(time.RFC3339))
 
-			mrs, err := listOpenMRs(gitlabClient, cfg.GitlabProjectID)
+			mrs, err := listOpenMRs(gitlabClient, cfg.GitlabProjectIDs)
 			if err != nil {
 				log.Printf("failed to list open MRs: %v\n", err)
 				return
@@ -119,25 +120,29 @@ func newGitlabClient(baseURL, token string) (*gitlab.Client, error) {
 	return gitlab.NewClient(token, gitlab.WithBaseURL(baseURL))
 }
 
-func listOpenMRs(client *gitlab.Client, projectID string) ([]*gitlab.BasicMergeRequest, error) {
+func listOpenMRs(client *gitlab.Client, projectIDs []string) ([]*gitlab.BasicMergeRequest, error) {
 	ctx := context.Background()
-
-	mrs, _, err := client.MergeRequests.ListProjectMergeRequests(
-		projectID,
-		&gitlab.ListProjectMergeRequestsOptions{
-			State: gitlab.Ptr("opened"),
-			ListOptions: gitlab.ListOptions{
-				PerPage: 50,
-				Page:    1,
+	allMRs := make([]*gitlab.BasicMergeRequest, 0)
+	for _, projectID := range projectIDs {
+		log.Printf("projectID: %s\n", projectID)
+		MRs, _, err := client.MergeRequests.ListProjectMergeRequests(
+			projectID,
+			&gitlab.ListProjectMergeRequestsOptions{
+				State: gitlab.Ptr("opened"),
+				ListOptions: gitlab.ListOptions{
+					PerPage: 50,
+					Page:    1,
+				},
 			},
-		},
-		gitlab.WithContext(ctx),
-	)
-	if err != nil {
-		return nil, err
+			gitlab.WithContext(ctx),
+		)
+		if err != nil {
+			return nil, err
+		}
+		allMRs = append(allMRs, MRs...)
 	}
 
-	return mrs, nil
+	return allMRs, nil
 }
 
 func postToSlackChannel(webhookURL, text string) error {
@@ -232,13 +237,13 @@ func formatMRsForSlack(mrs []*gitlab.BasicMergeRequest) string {
 }
 
 func getMRAgeEmoji(ageHours int) string {
-	if ageHours <= 2*24 {
+	if ageHours <= 3*24 {
 		return "🟢"
 	}
-	if ageHours <= 3*24 {
+	if ageHours <= 5*24 {
 		return "🟠"
 	}
-	if ageHours <= 5*24 {
+	if ageHours <= 8*24 {
 		return "🔴"
 	}
 	return "💀"
