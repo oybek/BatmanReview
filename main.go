@@ -83,8 +83,8 @@ func main() {
 		gocron.DailyJob(1, gocron.NewAtTimes(gocron.NewAtTime(12, 30, 0))),
 		gocron.NewTask(func() {
 			wd := time.Now().In(loc).Weekday()
-			if wd == time.Saturday || wd == time.Sunday {
-				log.Printf("skipping daily standup on weekend: %s", wd)
+			if wd == time.Saturday || wd == time.Sunday || wd == time.Monday {
+				log.Printf("skipping daily standup: %s", wd)
 				return
 			}
 
@@ -101,6 +101,30 @@ func main() {
 	)
 	if err != nil {
 		log.Fatalf("failed to add job: %v\n", err)
+	}
+
+	_, err = s.NewJob(
+		gocron.DailyJob(1, gocron.NewAtTimes(gocron.NewAtTime(14, 0, 0))),
+		gocron.NewTask(func() {
+			wd := time.Now().In(loc).Weekday()
+			if wd != time.Monday {
+				log.Printf("skipping 14:00 standup on non-Monday: %s", wd)
+				return
+			}
+
+			log.Printf("sending Monday planning call %s\n", time.Now().Format(time.RFC3339))
+
+			err = postToSlackChannel(
+				cfg.SlackWebhookURL,
+				fmt.Sprintf("<!channel> 👋 Weekly planning\n👉 %s", cfg.DailyCallURL),
+			)
+			if err != nil {
+				log.Printf("failed to post to slack: %v", err)
+			}
+		}),
+	)
+	if err != nil {
+		log.Fatalf("failed to add Monday job: %v\n", err)
 	}
 
 	ctx, stop := signal.NotifyContext(
